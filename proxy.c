@@ -3,19 +3,30 @@
  *
  * This program implements a multithreaded HTTP proxy.
  *
- * <Replace with your name(s) and NetID(s).>
+ * <Michelle Pang, yp29; Lily Gao, qg8.>
  */ 
 
 #include <assert.h>
 
 #include "csapp.h"
 
+#define SBUFSIZE 16	// Buffer size we want
+#define NUMTHREADS 8	// Number of threads we want
+
+struct conn_info
+{
+	int connffd;
+	struct sockaddr_in clientaddr;
+}
 static void	client_error(int fd, const char *cause, int err_num, 
 		    const char *short_msg, const char *long_msg);
 static char    *create_log_entry(const struct sockaddr_in *sockaddr,
 		    const char *uri, int size);
 static int	parse_uri(const char *uri, char **hostnamep, char **portp,
 		    char **pathnamep);
+static int 	open_listen(int port);
+static int 	open_client(char *hostname, char *port);
+static void	doit(int fd);
 
 /* 
  * Requires:
@@ -24,19 +35,204 @@ static int	parse_uri(const char *uri, char **hostnamep, char **portp,
  * Effects:
  *   <to be filled in by the student(s)> 
  */
-int
-main(int argc, char **argv)
+int main(int argc, char **argv) 
 {
+    int listenfd, connfd;
+    socklen_t clientlen;
+    struct sockaddr_in clientaddr;
+//     int *connfdp;
 
-	/* Check the arguments. */
-	if (argc != 2) {
-		fprintf(stderr, "Usage: %s <port number>\n", argv[0]);
-		exit(0);
+    /* Check command line args */
+    if (argc != 2) {
+	fprintf(stderr, "usage: %s <port>\n", argv[0]);
+	exit(1);
+    }
+
+    // port to listen on is argv[1]
+    listenfd = Open_listenfd(argv[1]);
+    while (1) {
+	clientlen = sizeof(clientaddr);
+	connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
+	doit(connfd);
+	Close(connfd);
+    }
+}
+
+/*
+ * Requires:
+ *   port is an unused TCP port number.
+ *
+ * Effects:
+ *   Opens and returns a listening socket on the specified port.  Returns -1
+ *   and sets errno on a Unix error.
+ */
+static int
+open_listen(int port)
+{
+	struct sockaddr_in serveraddr;
+	int listenfd, optval;
+
+	// // Prevent an "unused parameter" warning.  REMOVE THIS STATEMENT!
+	// (void)port;
+	// Set listenfd to a newly created stream socket.
+	// REPLACE THIS.
+	listenfd = socket(AF_INET, SOCK_STREAM, 0);
+		// return (-1);
+
+	// listenfd = 0;
+	// Eliminate "Address already in use" error from bind().
+	optval = 1;
+	if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, 
+	    (const void *)&optval, sizeof(int)) == -1) {
+		return (-1);
+	    }
+		
+	memset(&serveraddr, 0, sizeof(serveraddr));
+	/*
+	 * Set the IP address in serveraddr to the special ANY IP address, and
+	 * set the port to the input port.  Be careful to ensure that the IP
+	 * address and port are in network byte order.
+	 */
+	// FILL THIS IN.
+	serveraddr.sin_family = AF_INET;
+	serveraddr.sin_port = htons(port);
+	serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	// Use bind() to set the address of listenfd to be serveraddr.
+	// FILL THIS IN.
+	if (bind(listenfd, (const struct sockaddr *)&serveraddr, sizeof(serveraddr)) == -1)
+		return (-2);
+	/*
+	 * Use listen() to ready the socket for accepting connection requests.
+	 * Set the backlog to 8.
+	 */
+	// FILL THIS IN.
+	if (listen(listenfd, 8) == -1)
+		return (-1);
+	
+	return (listenfd);
+}
+
+/*
+ * Requires:
+ *   hostname points to a string representing a host name, and port points to
+ *   a string representing a TCP port number.
+ *
+ * Effects:
+ *   Opens a TCP connection to the server at <hostname, port>, and returns a
+ *   file descriptor ready for reading and writing.  Returns -1 and sets
+ *   errno on a Unix error.  Returns -2 on a DNS (getaddrinfo) error.
+ */
+static int
+open_client(char *hostname, char *port)
+{
+	struct addrinfo *ai, hints, *listp;
+	int fd;
+
+	int error;
+
+	// /*
+	//  * Prevent "unused parameter/variable" warnings.  REMOVE THESE
+	//  * STATEMENTS!
+	//  */
+	// (void)hostname;
+	// (void)port;
+
+	// Initialize the hints that should be passed to getaddrinfo().
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_socktype = SOCK_STREAM;  // Open a connection ...
+	hints.ai_flags = AI_NUMERICSERV;  // ... using a numeric port arg.
+	hints.ai_flags |= AI_ADDRCONFIG;  // Recommended for connections
+
+	/*
+	 * Use getaddrinfo() to get the server's address list (&listp).  On
+	 * failure, return -2.
+	 */
+	// REPLACE THIS.
+	error = getaddrinfo(hostname, port, &hints, &listp);
+	if (error != 0) {
+		fprintf(stderr, "getaddrinfo failed (%s:%s): %s\n",
+				hostname, port, gai_strerror(error));
+		return (-2);
+	}
+	/*
+	 * Iterate over the address list for one that can be successfully
+	 * connected to.
+	 */
+	for (ai = listp; ai != NULL; ai = ai->ai_next) {
+		/*
+		 * Create a new socket using ai's family, socktype, and
+		 * protocol, and assign its descriptor to fd.  On failure,
+		 * continue to the next ai.
+		 */
+		// REPLACE THIS.
+
+		if ((fd = socket(ai->ai_family, ai->ai_socktype,
+						 ai->ai_protocol)) == -1)
+			continue;
+		
+		/*
+		 * Try connecting to the server with ai's addr and addrlen.
+		 * Break out of the loop if connect() succeeds.
+		 */
+		// FILL THIS IN.
+		if (connect(fd, ai -> ai_addr, ai -> ai_addrlen) != -1)
+			break;
+
+		/*
+		 * Connect() failed.  Close the descriptor and continue to
+		 * the next ai.
+		 */
+		if (close(fd) == -1)
+			unix_error("close");
 	}
 
-	/* Return success. */
-	return (0);
+	// Clean up.  Avoid memory leaks!
+	freeaddrinfo(listp);
+
+	if (ai == NULL) {
+		// All connection attempts failed.
+		return (-1);
+	} else {
+		// The last connect succeeded.
+		return (fd);
+	}
 }
+
+// void *
+// start_routine(void *vargp)
+// {
+//         int connfd = *(int *)vargp;
+
+//         Pthread_detach(pthread_self());
+//         Free(vargp);
+//         doit(connfd);
+//         Close(connfd);
+//         return (NULL);
+// }
+
+/*
+ * doit - handle one HTTP request/response transaction
+ */
+static void
+doit(struct conn_info connection) 
+{
+	struct sockaddr_in *clientaddr;
+	char *hostnamep, *portp, *pathnamep, *request_url;
+    	char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
+    	char filename[MAXLINE], cgiargs[MAXLINE];
+	int fd;
+    	rio_t rio;
+
+	// Declare connection.
+	fd = connection.connfd; 
+	clientaddr = &connection.clientaddr;
+
+	
+
+  
+
+}
+
 
 /*
  * Requires:
@@ -53,6 +249,7 @@ main(int argc, char **argv)
 static int
 parse_uri(const char *uri, char **hostnamep, char **portp, char **pathnamep)
 {
+
 	const char *pathname_begin, *port_begin, *port_end;
 
 	if (strncasecmp(uri, "http://", 7) != 0)

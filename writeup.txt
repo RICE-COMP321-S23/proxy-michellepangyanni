@@ -27,3 +27,50 @@ Please answer the following questions about the design of your proxy.
    (1-2 sentences)
 
 9. When did you open/close the access log file?  (2 sentences)
+
+// NOTES:
+// parseURI() and look at do_it in LAB12. 
+/**
+ * open_listen: 
+ * Parse, then use open_client: FD, open a connection, called when we wanna send sth to server. 
+ * wait for server to send sth to us. 
+ * Forward server's message back. 
+*/
+
+// int
+// main(int argc, char **argv)
+// {
+// 	struct sockaddr_in clientaddr;
+// 	socklen_t clientlen;
+// 	int connfd, listenfd, port;
+
+// 	if (argc != 2) {
+// 		fprintf(stderr, "usage: %s <port>\n", argv[0]);
+// 		exit(1);
+// 	}
+// 	port = atoi(argv[1]);
+// 	listenfd = open_listen(port);
+// 	if (listenfd < 0) {
+// 		printf("listened = %d", listenfd);
+// 		unix_error("open_listen error");
+// 	}
+	
+// 		// fprintf(stderr, "ERROR listenfd: %s\n", gai_strerror(listenfd));
+		
+		
+// 	while (1) {
+
+// 		clientlen = sizeof(clientaddr);
+// 		/*
+// 		 * Call Accept() to accept a pending connection request from
+// 		 * the client, and create a new file descriptor representing
+// 		 * the server's end of the connection.  Assign the new file
+// 		 * descriptor to connfd.
+// 		 */
+// 		connfd = accept(listenfd, (struct sockaddr *)&clientaddr,
+// 						&clientlen);			
+// 		// Close the server's end of the connection.
+// 		doit(connfd);
+// 		Close(connfd);
+// 		}
+// 	}
