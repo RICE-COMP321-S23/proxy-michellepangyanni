@@ -1,6 +1,9 @@
+We are using 3 slip days on this assignment (Proxy).
+
 COMP 321 Project 6: Web Proxy
 
-<Replace with your name(s) and NetID(s).>
+<Lily Gao, qg8; Michelle Pang yp29>
+
 
 ---(Do not write lines of text that exceed the width of this line.)------------
 
