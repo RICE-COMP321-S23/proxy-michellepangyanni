@@ -315,7 +315,7 @@ sbuf_init(struct sbuf_t *sp, int n)
 	(void)sp;
 
 	// Allocate memory for buffer.
-	sbuf = malloc(sizeof(struct sbuf_t));
+	sbuf = Malloc(sizeof(struct sbuf_t));
 
 	// Set memory for array of connections.
     	sbuf->buf = calloc(n, sizeof(struct conn_info)); 	
@@ -324,9 +324,9 @@ sbuf_init(struct sbuf_t *sp, int n)
 	sbuf->shared_count = 0;
 
 	// Initialize prethreading.
-	pthread_mutex_init(&sbuf->mutex, NULL);
-	pthread_cond_init(&sbuf->cond_empty, NULL); 
-	pthread_cond_init(&sbuf->cond_full, NULL);
+	Pthread_mutex_init(&sbuf->mutex, NULL);
+	Pthread_cond_init(&sbuf->cond_empty, NULL); 
+	Pthread_cond_init(&sbuf->cond_full, NULL);
 }
 
 /* Insert item onto the rear of shared buffer sp */
@@ -335,11 +335,11 @@ void
 sbuf_insert(struct sbuf_t *sp, int connfd, struct sockaddr_in clientaddr)
 {
 	// Acquire lock.
-	pthread_mutex_lock(&(sbuf->mutex));
+	Pthread_mutex_lock(&(sbuf->mutex));
 
 	// If full, wait.
 	while (sbuf -> shared_count == sbuf->n) {
-		pthread_cond_wait(&(sbuf->cond_empty), &(sbuf->mutex));
+		Pthread_cond_wait(&(sbuf->cond_empty), &(sbuf->mutex));
 	}
 
 	// Insert connection into the buffer.
@@ -348,8 +348,8 @@ sbuf_insert(struct sbuf_t *sp, int connfd, struct sockaddr_in clientaddr)
 	sp->shared_count++;
 
 	// Signal to the threads that they can remove and release lock.
-	pthread_cond_broadcast(&sbuf->cond_full);
-	pthread_mutex_unlock(&sbuf->mutex);
+	Pthread_cond_broadcast(&sbuf->cond_full);
+	Pthread_mutex_unlock(&sbuf->mutex);
 }
 
 /**
@@ -359,11 +359,11 @@ struct conn_info
 sbuf_remove(struct sbuf_t *sp)
 {
 	// Aquire lock.
-	pthread_mutex_lock(&sbuf->mutex);
+	Pthread_mutex_lock(&sbuf->mutex);
 
 	// If empty, wait.
 	while (sbuf->shared_count == 0) {
-		pthread_cond_wait(&(sbuf->cond_full), &(sbuf->mutex));
+		Pthread_cond_wait(&(sbuf->cond_full), &(sbuf->mutex));
 	}
 
 	struct conn_info connection;
@@ -376,8 +376,8 @@ sbuf_remove(struct sbuf_t *sp)
 	sp->shared_count--;
 
 	// Signal routine that it can insert connections and release lock.
-	pthread_cond_broadcast(&sbuf->cond_empty);
-	pthread_mutex_unlock(&sbuf->mutex);
+	Pthread_cond_broadcast(&sbuf->cond_empty);
+	Pthread_mutex_unlock(&sbuf->mutex);
 	return (connection);
 }
 
@@ -395,7 +395,7 @@ static void *
 start_routine(void *vargp)
 {
 	(void)vargp;
-        Pthread_detach(pthread_self());
+        Pthread_detach(Pthread_self());
 	while(1) {
 		// Remove a connection from the buffer.
 		struct conn_info connfd_actual = sbuf_remove(sbuf);
@@ -420,7 +420,7 @@ doit(struct conn_info connection)
     	rio_t rio;
 
 	// Allocate memory for buffer.
-	buf = malloc(MAXLINE + 1);
+	buf = Malloc(MAXLINE + 1);
 
 	// Declare connection.
 	fd = connection.connfd; 
@@ -450,7 +450,7 @@ doit(struct conn_info connection)
 	}
 
 	// Malloc space for the request URL.
-	request_url = malloc(buf_size);
+	request_url = Malloc(buf_size);
 	sscanf(buf, "%s %s %s", method, request_url, version);
 
 	// If result is not a GET request.
