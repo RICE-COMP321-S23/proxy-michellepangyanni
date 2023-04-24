@@ -58,10 +58,10 @@ static struct conn_info sbuf_remove(struct sbuf_t *sp);
 
 /* 
  * Requires:
- *   <to be filled in by the student(s)> 
+ *   
  *
  * Effects:
- *   <to be filled in by the student(s)> 
+ *   
  */
 int 
 main(int argc, char **argv) 
@@ -270,7 +270,7 @@ open_client(char *hostname, char *port, int connfd, char *request,
 
 	// Clean up.  Avoid memory leaks!
 	freeaddrinfo(listp);
-	free(log_entry);
+	Free(log_entry);
 	Close(fd);
 
 	if (ai == NULL) {
@@ -438,7 +438,7 @@ doit(struct conn_info connection)
 		while (temp_buf[temp_size -1] != '\n') {
 			if ((temp_size = rio_readlineb(&rio, temp_buf, 
 			    MAXLINE)) == -1) {
-				free(buf);
+				Free(buf);
 				fprintf(stdout, 
 				    "rio_readlineb error: Connection closed!\n");
 				return;
@@ -451,21 +451,27 @@ doit(struct conn_info connection)
 
 	// Malloc space for the request URL.
 	request_url = Malloc(buf_size);
-	sscanf(buf, "%s %s %s", method, request_url, version);
+	// sscanf(buf, "%s %s %s", method, request_url, version);
 
-	// If result is not a GET request.
-	if ((strstr(method, "GET")) == NULL) {
-		client_error(fd, "Request is not a GET request.", 400, 
-		    "Bad Request", 
-		    "The given request does not contain a 'GET'. Try again!"); 
-		free(buf);
-		free(request_url);
+	if (sscanf(buf, "%s %s %s", method, request_url, version) != 3) {
+		client_error(fd, (const char *)buf, 400, "Bad request", 
+		    "The proxy coudln't process the request"); 
+		    return;
+	} else if (strcasecmp(version, "HTTP/1.0") && 
+	    strcasecmp(version, "HTTP/1.1")) {
+		client_error(fd, (const char *)version, 505, "Not Support", 
+		    "HTTP Version Not Supported"); 
+		    return;
+	} else if (strcasecmp(method, "GET")) {
+		client_error(fd, (const char *)method, 501, "Not Implemented", 
+		    "Proxy does not implement this method"); 
+		    return;
 	} else if (parse_uri(request_url, &hostnamep, &portp, 
 	    &pathnamep) == -1) {
 		client_error(fd, "Requested file cannot be found.", 404, 
 		    "Not found", "The requested file does not exist,"); 
-		free(buf);
-		free(request_url);
+		Free(buf);
+		Free(request_url);
 	} else {
 		sprintf(request, "GET %s %s\r\n", pathnamep, version);
 		// Read request header.
@@ -474,11 +480,11 @@ doit(struct conn_info connection)
 		    request_url);
 
 		// Free.
-		free(hostnamep);
-		free(portp);
-		free(pathnamep);
-		free(buf);
-		free(request_url);
+		Free(hostnamep);
+		Free(portp);
+		Free(pathnamep);
+		Free(buf);
+		Free(request_url);
 	}
 
 }
