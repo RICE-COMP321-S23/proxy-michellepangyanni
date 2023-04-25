@@ -183,7 +183,8 @@ consumer(void *arg)
 
 /* 
  * Requires:
- *   "fd" is an valid file descriptor, "sockaddr_in" is a valid client address.
+ *   The parameter "fd" must be an open socket that is connected to the client,
+ *   the parameter "clientaddr" must point to a valid sockaddr_in structure.
  *
  * Effects:
  *   Processes the client's request, and edits it to be appropriate
