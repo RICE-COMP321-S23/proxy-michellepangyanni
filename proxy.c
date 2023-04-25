@@ -180,6 +180,7 @@ consumer(void *arg)
 	}
 	return (NULL);
 }
+
 /* 
  * Requires:
  *   "fd" is an valid file descriptor, "sockaddr_in" is a valid client address.
@@ -241,7 +242,7 @@ doit(int fd, struct sockaddr_in *clientaddr)
 	    strcasecmp(version, "HTTP/1.1")) {
 		client_error(fd, (const char *)version, 505, "Not Support", 
 		    "Request is neither HTTP/1.0 nor HTTP/1.1."); 
-		    return;
+		return;
 	}
 
 	/* Try parsing uri. */
