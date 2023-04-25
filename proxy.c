@@ -3,7 +3,7 @@
  *
  * This program implements a multithreaded HTTP proxy.
  *
- * <Replace with your name(s) and NetID(s).>
+ * <Michelle Pang, yp29; Lily Gao, qg8.>
  */ 
 
 #include <assert.h>
@@ -13,11 +13,10 @@
 #define SBUFSIZE 16	/* Buffer size we want */ 
 #define NUMTHREADS 4	/* Number of threads we want */ 
 
-
 struct conn_info
 {
-	int connfd;
-	struct sockaddr_in clientaddr;
+	int connfd;			/* File descriptor. */
+	struct sockaddr_in clientaddr;	/* Client address. */
 };
 
 /* Global variables: */
@@ -27,7 +26,7 @@ pthread_cond_t cond_full;	/* variable to wait on full buffer. */
 unsigned int prod_index = 0; /* Producer index into shared buffer. */ 
 unsigned int cons_index = 0; /* Consumer index into shard buffer. */
 unsigned int share_cnt = 0;  /* Item count. */
-FILE *logfd;	/* Log file. */
+FILE *logfd;		/* Log file. */
 struct conn_info *shared_buffer[SBUFSIZE];	/* Buffer Array. */
 
 /* Functions: */
@@ -44,10 +43,11 @@ void 		sig_ignore(int sig);
 
 /* 
  * Requires:
- *   <t o be filled in by the student(s)> 
+ *   Nothing. 
  *
  * Effects:
- *   <to be filled in by the student(s)> 
+ *   A main routine for proxy program. This proxy can deal with multiple 
+ *   threads concurrently, supported by prethreading approach.
  */
 int
 main(int argc, char **argv)
@@ -87,17 +87,17 @@ main(int argc, char **argv)
 
 	clientlen = sizeof(clientaddr);
 
-	/* Producer. */
+	/* Producer thread. */
 	while (true) {
 		struct conn_info *sbuffer = Malloc(sizeof(struct conn_info));
 		connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
 		Pthread_mutex_unlock(&mutex); 
 
 		/* Wait on full condition variable. */
-		while (!(share_cnt < SBUFSIZE))
-		{
+		while (!(share_cnt < SBUFSIZE)) {
 			Pthread_cond_wait(&cond_full, &mutex);
 		}
+
 		sbuffer->connfd = connfd;
 		sbuffer->clientaddr = clientaddr;
 		
@@ -131,6 +131,14 @@ main(int argc, char **argv)
 	Fclose(logfd);
 	return (0);
 }
+
+/* 
+ * Requires:
+ *   Nothing. 
+ *
+ * Effects:
+ *   Consumer thread executes this function.
+ */
 void *
 consumer(void *arg)
 {
@@ -142,8 +150,7 @@ consumer(void *arg)
 
 	while (true) {
 		/* Wait on empty condition variable. */
-		while (!(share_cnt > 0))
-		{
+		while (!(share_cnt > 0)) {
 			// Acquire mutex lock.
 			Pthread_cond_wait(&cond_empty, &mutex);
 		}
@@ -172,6 +179,7 @@ consumer(void *arg)
 	}
 	return (NULL);
 }
+
 void
 doit(int fd, struct sockaddr_in *clientaddr) 
 {
@@ -255,7 +263,7 @@ doit(int fd, struct sockaddr_in *clientaddr)
 
 	client_fd = Open_clientfd(hostname, port);
 
-	if (client_fd < 0){
+	if (client_fd < 0) {
 		client_error(fd, (const char *)uri, 404, "Not found",
 		 "The requested file does not exist");
 	}
@@ -271,7 +279,7 @@ doit(int fd, struct sockaddr_in *clientaddr)
 	while ((n = rio_readn(client_fd, response, MAXLINE)) > 0) {
 
 		bytes_forwarded += n;
-		if (rio_writen(fd, response, n) != n){
+		if (rio_writen(fd, response, n) != n) {
 			client_error(fd, buf, 400, "Bad request",
 				"Sending back error.");			
 			Free(hostname);
