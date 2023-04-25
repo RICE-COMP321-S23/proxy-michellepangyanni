@@ -13,6 +13,19 @@ Please answer the following questions about the design of your proxy.
 
 1. Describe the steps taken by your proxy to service a single HTTP transaction
    from beginning to end.  (10-14 sentences)
+   Our proxy first will receive an IP address and port number from the client,
+   and it will accept the request. After that, the proxy will ensure the 
+   atomicity by using mutex locks to access the buffer sequentially. After 
+   threads gainning a request following the mutual exclusion, it will start 
+   processing the request. It will first do some checkings, like checking if
+   there is three arguments, is the method GET, or is the HTTP followed by /1.1
+   or /1.0. After that, it will modify the request as described in question 2,
+   and extract hostname, port, and pathname from uri. Then, the proxy opens a 
+   connection to the end server, and send the request. After the end server
+   received the request, it will write a response to the server (detail in
+   question 4). The proxy then will write the response to the client, and 
+   writing a log entry to log file with correct bytes. Finally, the proxy frees 
+   all unused memory. In the end it close the connections to client and server.
    
 
 2. Did you modify the first line of the request message?  If so, how?
