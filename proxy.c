@@ -10,8 +10,8 @@
 #include <stdbool.h>
 #include "csapp.h"
 
-#define SBUFSIZE 16	/* Buffer size we want */ 
-#define NUMTHREADS 4	/* Number of threads we want */ 
+#define SBUFSIZE 40	/* Buffer size we want. */ 
+#define NUMTHREADS 10	/* Number of threads we want. */ 
 
 struct conn_info
 {
@@ -23,10 +23,10 @@ struct conn_info
 pthread_mutex_t mutex;		/* pthread mutex. */ 
 pthread_cond_t cond_empty;	/* variable to wait on empty buffer. */
 pthread_cond_t cond_full;	/* variable to wait on full buffer. */
-unsigned int prod_index = 0; /* Producer index into shared buffer. */ 
-unsigned int cons_index = 0; /* Consumer index into shard buffer. */
-unsigned int share_cnt = 0;  /* Item count. */
-FILE *logfd;		/* Log file. */
+unsigned int prod_index = 0;    /* Producer index into shared buffer. */ 
+unsigned int cons_index = 0;    /* Consumer index into shard buffer. */
+unsigned int share_cnt = 0;     /* Item count. */
+FILE *logfd;		        /* Log file. */
 struct conn_info *shared_buffer[SBUFSIZE];	/* Buffer Array. */
 
 /* Functions: */
@@ -65,6 +65,7 @@ main(int argc, char **argv)
 	pthread_cond_init(&cond_empty, NULL);
 	pthread_cond_init(&cond_full, NULL);
 
+	/* Ignore the signal SIGPIPE. */
 	Signal(SIGPIPE, sig_ignore);
 
 	// Initialize logging.
@@ -179,7 +180,15 @@ consumer(void *arg)
 	}
 	return (NULL);
 }
-
+/* 
+ * Requires:
+ *   Nothing. 
+ *
+ * Effects:
+ *   Processes the client's request, and edits it to be appropriate
+ *   for the end server. Then, doit delegates the rest of the work to
+ *   open_client. 
+ */
 void
 doit(int fd, struct sockaddr_in *clientaddr) 
 {
