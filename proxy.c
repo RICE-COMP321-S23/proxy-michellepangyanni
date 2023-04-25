@@ -6,6 +6,7 @@
  * <Replace with your name(s) and NetID(s).>
  */ 
 
+
 #include <assert.h>
 #include <stdbool.h>
 #include "csapp.h"
@@ -13,290 +14,480 @@
 #define SBUFSIZE 16	/* Buffer size we want */ 
 #define NUMTHREADS 4	/* Number of threads we want */ 
 
-
 struct conn_info
 {
 	int connfd;
 	struct sockaddr_in clientaddr;
 };
 
+struct sbuf_t 
+{
+	struct conn_info *buf;	/* Buffer array */ 
+	int shared_count;	/* Item count */ 
+	int n;			/* Max number of slots */ 
+	int front;		/* First item is buf[(front + 1) % n] */
+	int rear;		/* Last item is buf[rear % n] */
+	pthread_mutex_t mutex;	/* pthread mutex. */
+	pthread_cond_t cond_empty;	/* Wait on empty buffer */
+	pthread_cond_t cond_full;	/* Wait on full buffer.*/
+};
+
 /* Global variables: */
-pthread_mutex_t mutex;		/* pthread mutex. */ 
-pthread_cond_t cond_empty;	/* variable to wait on empty buffer. */
-pthread_cond_t cond_full;	/* variable to wait on full buffer. */
-unsigned int prod_index = 0; /* Producer index into shared buffer. */ 
-unsigned int cons_index = 0; /* Consumer index into shard buffer. */
-unsigned int share_cnt = 0;  /* Item count. */
-FILE *logfd;	/* Log file. */
-struct conn_info *shared_buffer[SBUFSIZE];	/* Buffer Array. */
+static FILE *logfd;	/* Log file */
+struct sbuf_t *sbuf;	/* Shared buffer */
 
 /* Functions: */
 static void	client_error(int fd, const char *cause, int err_num, 
 		    const char *short_msg, const char *long_msg);
 static char    *create_log_entry(const struct sockaddr_in *sockaddr,
 		    const char *uri, int size);
-static int	parse_uri(const char *uri, char **hostnamep, char **portp,
-		    char **pathnamep);
-void		*consumer(void *arg);
-void 		doit(int fd, struct sockaddr_in *clientaddr);
-void 		sig_ignore(int sig);
+static int 	parse_uri(const char *uri, char **hostnamep, char **portp,
+	            char **pathnamep);
 
+/* Helper Functions: */
+static int 	open_listen(int port);
+static int 	open_client(char *hostname, char *port, int connfd, 
+		    char *request, struct sockaddr_in clientaddr, 
+		    char *request_url);
+static void 	doit(struct conn_info connection);
+static void 	*start_routine(void *vargp);
+static char 	*read_request_headers(rio_t *rp, char *request);
+static void 	sbuf_init(struct sbuf_t *sp, int n);
+static void	sbuf_insert(struct sbuf_t *sp, int connfd, 
+		    struct sockaddr_in clientaddr);
+static struct conn_info sbuf_remove(struct sbuf_t *sp);
 
 /* 
  * Requires:
- *   <t o be filled in by the student(s)> 
+ *   
  *
  * Effects:
- *   <to be filled in by the student(s)> 
+ *   
  */
 int
 main(int argc, char **argv)
 {
 
-	int listenfd, connfd, i;
-	pthread_t cons_tid[NUMTHREADS];
-	socklen_t clientlen;
+    	int listenfd, connfd, error, i, port;
+    	socklen_t clientlen;
+	pthread_t threads;
     	struct sockaddr_in clientaddr;
+    	char client_hostname[MAXLINE], haddrp[INET_ADDRSTRLEN];
 
-	/* Initialize pthread variables. */
-	Pthread_mutex_init(&mutex, NULL);
-	
-	/* Initialize condition variables. */
-	pthread_cond_init(&cond_empty, NULL);
-	pthread_cond_init(&cond_full, NULL);
 
-	Signal(SIGPIPE, sig_ignore);
-
-	// Initialize logging.
+    	// Initialize logging.
     	logfd = fopen("proxy.log", "a+");
     	if (logfd == NULL) 
 		return -1;
 
-    	// Check command line args. 
-    	if (argc != 2) {
-		fprintf(stderr, "usage: %s <port>\n", argv[0]);
+	/* Check the arguments. */
+	if (argc != 2) {
+		fprintf(stderr, "Usage: %s <port number>\n", argv[0]);
 		exit(0);
     	}
 
-    	listenfd = Open_listenfd(argv[1]);
+    	port = atoi(argv[1]);
+    	listenfd = open_listen(port);
+    	if (listenfd < 0) 
+		unix_error("open_listen error");
+    	
+    	// Ignore SIGPIPE.
+    	Signal(SIGPIPE, SIG_IGN);
+
+    	// Initialize shared buffer.
+    	sbuf_init(sbuf, SBUFSIZE);
     	
    	// Create threads for pre-threading.
    	for (i = 0; i < NUMTHREADS; i++) {
-		Pthread_create(&cons_tid[i], NULL, consumer, NULL);
+		Pthread_create(&threads, NULL, start_routine, NULL);
    	}
 
-	clientlen = sizeof(clientaddr);
+   	// Continously accept requests.
+	while (1) {
+		clientlen = sizeof(struct sockaddr_in);
+		connfd = accept(listenfd, (struct sockaddr *)&clientaddr, 
+		    &clientlen);
+		error = getnameinfo((struct sockaddr *)(&clientaddr), 
+		    clientlen, client_hostname, sizeof(client_hostname), 
+		    NULL, 0, 0);
 
-	/* Producer. */
-	while (true) {
-		struct conn_info *sbuffer = Malloc(sizeof(struct conn_info));
-		connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
-		Pthread_mutex_unlock(&mutex); 
-
-		/* Wait on full condition variable. */
-		while (!(share_cnt < SBUFSIZE))
-		{
-			Pthread_cond_wait(&cond_full, &mutex);
+		// Handle error upon failed client into retrieval.
+		if (error != 0) {
+			fprintf(stderr, "ERROR: %s\n", gai_strerror(error));
+			Close(connfd);
+			continue;
 		}
-		sbuffer->connfd = connfd;
-		sbuffer->clientaddr = clientaddr;
-		
-		/* Store key in shared buffer. */ 
-		shared_buffer[prod_index] = sbuffer;
 
-		/* Signal empty condition variable. */
-		Pthread_cond_signal(&cond_empty);
-
-		/* Update shared count variable. */
-		share_cnt++;
-
-		/* Update producer index. */
-		if (prod_index == SBUFSIZE - 1)
-			prod_index = 0;
-		else
-			prod_index++;
-
-		/* Release mutex lock. */
-		Pthread_mutex_unlock(&mutex); 
-
-	}
-	/* Clean up. */
-	Pthread_mutex_destroy(&mutex);
-	
-	/* Destroy condition variables. */
-	pthread_cond_destroy(&cond_empty);
-	pthread_cond_destroy(&cond_full);
-
-	/* Close log file. */
-	Fclose(logfd);
-	return (0);
+		Inet_ntop(AF_INET, &clientaddr.sin_addr, haddrp, 
+		    INET_ADDRSTRLEN);
+		// Insert connection into the shared buffer.
+		sbuf_insert(sbuf, connfd, clientaddr);
+    	}
+	return(0);
 }
-void *
-consumer(void *arg)
+
+
+/*
+ * Requires:
+ *   port is an unused TCP port number.
+ *
+ * Effects:
+ *   Opens and returns a listening socket on the specified port.  Returns -1
+ *   and sets errno on a Unix error.
+ */
+static int
+open_listen(int port)
 {
-	struct conn_info *key;
-	Pthread_detach(pthread_self());
+	struct sockaddr_in serveraddr;
+	int listenfd, optval;
 
-	 /* Cast to eliminate warnings. */
-        (void)arg;
+	// Set listenfd to a newly created stream socket.
+	listenfd = socket(AF_INET, SOCK_STREAM, 0);
 
-	while (true) {
-		/* Wait on empty condition variable. */
-		while (!(share_cnt > 0))
-		{
-			// Acquire mutex lock.
-			Pthread_cond_wait(&cond_empty, &mutex);
-		}
+	// Eliminate "Address already in use" error from bind().
+	optval = 1;
+	if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, 
+	    (const void *)&optval, sizeof(int)) == -1) 
+		return (-1);
+	    
+	memset(&serveraddr, 0, sizeof(serveraddr));
 
-		/* Read key from shared buffer. */ 
-		key = shared_buffer[cons_index];
-		
-		/* Signal full condition variable. */
-		Pthread_cond_signal(&cond_full);
+	/*
+	 * Set the IP address in serveraddr to the special ANY IP address, and
+	 * set the port to the input port.  Be careful to ensure that the IP
+	 * address and port are in network byte order.
+	 */
+	serveraddr.sin_family = AF_INET;
+	serveraddr.sin_port = htons(port);
+	serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-		/* Update shared count variable. */
-		share_cnt--;
+	// Use bind() to set the address of listenfd to be serveraddr.
+	if (bind(listenfd, (const struct sockaddr *)&serveraddr, 
+	    sizeof(serveraddr)) == -1)
+		return (-2);
 
-		/* Update consumer index. */
-		if (cons_index == SBUFSIZE - 1)
-			cons_index = 0;
-		else
-			cons_index++;
+	/*
+	 * Use listen() to ready the socket for accepting connection requests.
+	 * Set the backlog to 8.
+	 */
+	if (listen(listenfd, 8) == -1)
+		return (-1);
+	
+	return (listenfd);
+}
 
-		/* Release mutex lock. */
-		Pthread_mutex_unlock(&mutex);
+/*
+ * Requires:
+ *   hostname points to a string representing a host name, and port points to
+ *   a string representing a TCP port number.
+ *
+ * Effects:
+ *   Opens a TCP connection to the server at <hostname, port>, and returns a
+ *   file descriptor ready for reading and writing.  Returns -1 and sets
+ *   errno on a Unix error.  Returns -2 on a DNS (getaddrinfo) error.
+ */
+static int
+open_client(char *hostname, char *port, int connfd, char *request, 
+    struct sockaddr_in clientaddr, char *request_url)
+{
+	struct addrinfo *ai, hints, *listp;
+	int fd, error, n;
+	char buf[MAXLINE];
+	rio_t rio;
 
-		doit(key->connfd, &key->clientaddr);
+	// Initialize the hints that should be passed to getaddrinfo().
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_socktype = SOCK_STREAM;  // Open a connection ...
+	hints.ai_flags = AI_NUMERICSERV;  // ... using a numeric port arg.
+	hints.ai_flags |= AI_ADDRCONFIG;  // Recommended for connections
 
-		Close(key->connfd);
+	/*
+	 * Use getaddrinfo() to get the server's address list (&listp).  On
+	 * failure, return -2.
+	 */
+	error = getaddrinfo(hostname, port, &hints, &listp);
+	if (error != 0) {
+		fprintf(stderr, "getaddrinfo failed (%s:%s): %s\n",
+		    hostname, port, gai_strerror(error));
+		return (-2);
 	}
+	/*
+	 * Iterate over the address list for one that can be successfully
+	 * connected to.
+	 */
+	for (ai = listp; ai != NULL; ai = ai->ai_next) {
+		/*
+		 * Create a new socket using ai's family, socktype, and
+		 * protocol, and assign its descriptor to fd.  On failure,
+		 * continue to the next ai.
+		 */
+		if ((fd = socket(ai->ai_family, ai->ai_socktype,
+		    ai->ai_protocol)) == -1)
+			continue;
+		
+		/*
+		 * Try connecting to the server with ai's addr and addrlen.
+		 * Break out of the loop if connect() succeeds.
+		 */
+		if (connect(fd, ai -> ai_addr, ai -> ai_addrlen) != -1)
+			break;
+
+		/*
+		 * Connect() failed.  Close the descriptor and continue to
+		 * the next ai.
+		 */
+		if (close(fd) == -1)
+			unix_error("close");
+	}
+
+	// Print request to stdout.
+	fprintf(stdout, "%s\n", request);
+	rio_readinitb(&rio, fd);
+
+	// Write request to end server.
+	rio_writen(fd, request, strlen(request));
+	rio_writen(fd, "\r\n", 2);
+
+	/*
+	 * Write response read from the sever back to the client
+	 * and keep track of the size of the response.
+	 */
+	int size_server = 0;
+	while ((n = rio_readlineb(&rio, buf, MAXLINE)) != 0) {
+		rio_writen(connfd, buf, n);
+		size_server += strlen(buf);
+	}
+
+	// Create log entry when recieving request.
+	char *log_entry = create_log_entry(&clientaddr, request_url, 
+	    size_server);
+
+	// Include new line character at end of log entry.
+	sprintf(log_entry, "%s\n", log_entry);
+
+	// Write and flush to the log file. 
+	fprintf(logfd, log_entry);
+	fflush(logfd);
+
+	// Clean up.  Avoid memory leaks!
+	freeaddrinfo(listp);
+	Free(log_entry);
+	Close(fd);
+
+	if (ai == NULL) {
+		// All connection attempts failed.
+		return (-1);
+	} else {
+		// The last connect succeeded.
+		return (fd);
+	}
+}
+/**
+ * Read the header of a HTTP request and use them to build the reformatted 
+ * request string.
+*/
+static char * 
+read_request_headers(rio_t *rp, char *request)
+{
+	// Initialize buffer.
+	char buf[MAXLINE];
+
+	// Read to the buffer.
+	rio_readlineb(rp, buf, MAXLINE);
+
+	// Iterate until new line.
+	while (strcmp(buf, "\r\n")) {
+
+		//Append headers that don't include "connection".
+		if (strstr(buf, "Connection") == NULL) 
+			sprintf(request, "%s%s", request, buf);
+		
+		// Read next line.
+		rio_readlineb(rp, buf, MAXLINE);
+	}
+
 	return (NULL);
 }
-void
-doit(int fd, struct sockaddr_in *clientaddr) 
+
+/* Create an empty, bounded, shared FIFO buffer with n slots */
+void 
+sbuf_init(struct sbuf_t *sp, int n)
 {
-	/* Initialization. */
-	char method[MAXLINE], version[MAXLINE], uri[MAXLINE];
-	char buf_server[MAXLINE], response[MAXLINE], read_line[MAXLINE];
-	char *hostname, *port, *pathname, *buf;
-	char *entry;
-	rio_t rio, rio_client;
-	int client_fd, n, read;
-	int uri_len = 0;
-	int bytes_forwarded = 0;
-	int num = 0;
-	int max_copy = MAXLINE;
+	(void)sp;
 
-	/* Allocate space for buf. */
-	buf = Malloc(MAXLINE);
+	// Allocate memory for buffer.
+	sbuf = Malloc(sizeof(struct sbuf_t));
 
-	/* Read request line and headers */
-	rio_readinitb(&rio, fd);
-	
-	/* When exceeds MAXLINE, realloc. */
-	while ((read = rio_readlineb(&rio, buf + uri_len, 
-	    max_copy - uri_len)) > 0) {
-		uri_len += read;
-		if (uri_len >= max_copy) {
-			max_copy *= 2;
-			buf = (char *)realloc(buf, max_copy);
-		}
-		if (strstr(buf, "\r\n")) 
-			break;
+	// Set memory for array of connections.
+    	sbuf->buf = calloc(n, sizeof(struct conn_info)); 	
+    	sbuf->n = n;                    /* Buffer holds max of n items */
+    	sbuf->front = sbuf->rear = 0;   /* Empty buffer */
+	sbuf->shared_count = 0;
+
+	// Initialize prethreading.
+	Pthread_mutex_init(&sbuf->mutex, NULL);
+	Pthread_cond_init(&sbuf->cond_empty, NULL); 
+	Pthread_cond_init(&sbuf->cond_full, NULL);
+}
+
+/* Insert item onto the rear of shared buffer sp */
+/* $begin sbuf_insert */
+void 
+sbuf_insert(struct sbuf_t *sp, int connfd, struct sockaddr_in clientaddr)
+{
+	// Acquire lock.
+	Pthread_mutex_lock(&(sbuf->mutex));
+
+	// If full, wait.
+	while (sbuf -> shared_count == sbuf->n) {
+		Pthread_cond_wait(&(sbuf->cond_empty), &(sbuf->mutex));
 	}
 
-	/* Fill in the method, URI, and version info from the first header. */
-	if (sscanf(buf, "%s %s %s", method, uri, version) != 3) {
-		client_error(fd, buf, 400, "Bad request",
-			"Request formatted in the wrong way.");
-		return;
+	// Insert connection into the buffer.
+	sp->buf[(++sp->rear)%(sp->n)] = (struct conn_info){connfd, clientaddr};
+	//Update shared count variable.
+	sp->shared_count++;
+
+	// Signal to the threads that they can remove and release lock.
+	Pthread_cond_broadcast(&sbuf->cond_full);
+	Pthread_mutex_unlock(&sbuf->mutex);
+}
+
+/**
+ * Atomically remove and return a connection from the buffer.
+*/
+struct conn_info 
+sbuf_remove(struct sbuf_t *sp)
+{
+	// Aquire lock.
+	Pthread_mutex_lock(&sbuf->mutex);
+
+	// If empty, wait.
+	while (sbuf->shared_count == 0) {
+		Pthread_cond_wait(&(sbuf->cond_full), &(sbuf->mutex));
 	}
 
-	/* Check that the request is GET and return an error if not. */
-	if (strcasecmp(method, "GET")) {
-		client_error(fd, method, 501, "Not implemented",
-			"Server only sopport GET.");
-		return;
-	}
+	struct conn_info connection;
+	int front = ++sp->front;
+	int bottom = sp->n;
+	int item = (front)%(bottom);
+	connection = (sp->buf[item]); // Remove item.
 
-	if (strcasecmp(version, "HTTP/1.0") &&
-	    strcasecmp(version, "HTTP/1.1")) {
-		client_error(fd, (const char *)version, 505, "Not Support", 
-		    "Request is neither HTTP/1.0 nor HTTP/1.1."); 
-		    return;
-	}
+	// Update count of active requests.
+	sp->shared_count--;
 
-	if (parse_uri((const char *)uri, &hostname, &port, &pathname) < 0) {
-		client_error(fd, (const char *)uri, 404, "Not found",
-		"Parse request failed");
-		Free(hostname);
-		Free(port);
-		Free(pathname);
-		return;
-	}
-	
-	sprintf(buf_server, "%s %s %s\r\n", method, pathname, version);
-	
-
-	while (((num = rio_readlineb(&rio, read_line, MAXLINE)) > 0)) {
-		if (!strcmp(read_line, "\r\n"))
-			break;
-		if (!strstr(read_line, "Connection") && 
-		    !strstr(read_line, "Keep-Alive") && 
-		    !strstr(read_line, "Proxy-Connection")) 
-			strcat(buf_server, read_line);
-	}
-
-	if (strstr(version, "HTTP/1.1")) 
-		strcat(buf_server, "Connection: close\r\n");
-
-	strcat(buf_server, "\r\n");
-	printf("%s", buf_server);
-
-	client_fd = Open_clientfd(hostname, port);
-
-	if (client_fd < 0){
-		client_error(fd, (const char *)uri, 404, "Not found",
-		 "The requested file does not exist");
-	}
-
-	rio_readinitb(&rio_client, client_fd);
-
-	if (rio_writen(client_fd, buf_server, strlen(buf_server)) < 0) {
-		client_error(client_fd, buf, 400, "Bad request",
-			"Malformed Get Request");
-		return;
-	}
-
-	while ((n = rio_readn(client_fd, response, MAXLINE)) > 0) {
-
-		bytes_forwarded += n;
-		if (rio_writen(fd, response, n) != n){
-			client_error(fd, buf, 400, "Bad request",
-				"Sending back error.");			
-			Free(hostname);
-			Free(port);
-			Free(pathname);
-			return;
-		}
-	}
-
-	/* Get the log info using the clientaddr stored in our buffer. */
-	entry = create_log_entry(clientaddr, uri, bytes_forwarded);
-	strcat(entry, "\n");
-
-	/* Write entry to the log file. */
-	fwrite(entry, sizeof(char), strlen(entry), logfd);
-	fflush(logfd);
-	Free(entry);
-	return;
+	// Signal routine that it can insert connections and release lock.
+	Pthread_cond_broadcast(&sbuf->cond_empty);
+	Pthread_mutex_unlock(&sbuf->mutex);
+	return (connection);
 }
 
 
-void 
-sig_ignore(int sig) {
-    	printf("SIGPIPE ignored %d\n", sig);
-    	return;
+/**
+ * Requires:
+ *  None.
+ * Effects:
+ *  Continuously attempts to remove a connection from the shared buffer, then 
+ *  starts the proxy routine to write to the end server and transmit the 
+ *  response back to the client.
+ * 
+*/
+static void *
+start_routine(void *vargp)
+{
+	(void)vargp;
+        Pthread_detach(Pthread_self());
+	while(1) {
+		// Remove a connection from the buffer.
+		struct conn_info connfd_actual = sbuf_remove(sbuf);
+		// Delegate to doit routine.
+		doit(connfd_actual);
+		//Close the client connection.
+		Close(connfd_actual.connfd);
+	}
+        return (NULL);
+}
+
+/*
+ * doit - handle one HTTP request/response transaction
+ */
+static void
+doit(struct conn_info connection) 
+{
+	struct sockaddr_in *clientaddr;
+	char *hostnamep, *portp, *pathnamep, *request_url, *buf;
+    	char temp_buf[MAXLINE], method[MAXLINE], version[MAXLINE], request[MAXBUF];
+	int fd, buf_size, temp_size;
+    	rio_t rio;
+
+	// Allocate memory for buffer.
+	buf = Malloc(MAXLINE + 1);
+
+	// Declare connection.
+	fd = connection.connfd; 
+	clientaddr = &connection.clientaddr;
+
+	// Initialize empty read buffer.
+	rio_readinitb(&rio, fd);
+
+	// Read request line and send to buffer.
+	buf_size = rio_readlineb(&rio, buf, MAXLINE);
+
+	// Handle a long request.
+	if (buf_size == MAXLINE - 1) {
+		temp_size = buf_size;
+		while (temp_buf[temp_size -1] != '\n') {
+			if ((temp_size = rio_readlineb(&rio, temp_buf, 
+			    MAXLINE)) == -1) {
+				Free(buf);
+				fprintf(stdout, 
+				    "rio_readlineb error: Connection closed!\n");
+				return;
+			}
+			buf_size += temp_size;
+			buf = realloc(buf, MAXLINE + 1);
+			sprintf(buf, "%s%s", buf, temp_buf);
+		}
+	}
+
+	// Malloc space for the request URL.
+	request_url = Malloc(buf_size);
+	// sscanf(buf, "%s %s %s", method, request_url, version);
+
+	if (sscanf(buf, "%s %s %s", method, request_url, version) != 3) {
+		client_error(fd, (const char *)buf, 400, "Bad request", 
+		    "The proxy coudln't process the request"); 
+		    return;
+	} else if (strcasecmp(version, "HTTP/1.0") && 
+	    strcasecmp(version, "HTTP/1.1")) {
+		client_error(fd, (const char *)version, 505, "Not Support", 
+		    "HTTP Version Not Supported"); 
+		    return;
+	} else if (strcasecmp(method, "GET")) {
+		client_error(fd, (const char *)method, 501, "Not Implemented", 
+		    "Proxy does not implement this method"); 
+		    return;
+	} else if (parse_uri(request_url, &hostnamep, &portp, 
+	    &pathnamep) == -1) {
+		client_error(fd, "Requested file cannot be found.", 404, 
+		    "Not found", "The requested file does not exist,"); 
+		Free(buf);
+		Free(request_url);
+	} else {
+		sprintf(request, "GET %s %s\r\n", pathnamep, version);
+		// Read request header.
+		read_request_headers(&rio, request);
+		open_client(hostnamep, portp, fd, request, *clientaddr, 
+		    request_url);
+
+		// Free.
+		Free(hostnamep);
+		Free(portp);
+		Free(pathnamep);
+		Free(buf);
+		Free(request_url);
+	}
+
 }
 
 /*
@@ -380,7 +571,6 @@ parse_uri(const char *uri, char **hostnamep, char **portp, char **pathnamep)
 static char *
 create_log_entry(const struct sockaddr_in *sockaddr, const char *uri, int size)
 {
-	struct tm result;
 
 	/*
 	 * Create a large enough array of characters to store a log entry.
@@ -392,8 +582,8 @@ create_log_entry(const struct sockaddr_in *sockaddr, const char *uri, int size)
 
 	/* Get a formatted time string. */
 	time_t now = time(NULL);
-	int log_strlen = strftime(log_str, MAXLINE, 
-	    "%a %d %b %Y %H:%M:%S %Z: ", localtime_r(&now, &result));
+	int log_strlen = strftime(log_str, MAXLINE, "%a %d %b %Y %H:%M:%S %Z: ",
+	    localtime_r(&now, &result));
 
 	/*
 	 * Convert the IP address in network byte order to dotted decimal
@@ -470,12 +660,3 @@ client_error(int fd, const char *cause, int err_num, const char *short_msg,
 	if (rio_writen(fd, headers, strlen(headers)) != -1)
 		rio_writen(fd, body, strlen(body));
 }
-
-
-// Prevent "unused function" and "unused variable" warnings.
-static const void *dummy_ref[] = { client_error, create_log_entry, dummy_ref,
-    parse_uri };
-
-
-
-
