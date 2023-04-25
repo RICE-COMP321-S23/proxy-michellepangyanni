@@ -182,7 +182,7 @@ consumer(void *arg)
 }
 /* 
  * Requires:
- *   Nothing. 
+ *   "fd" is an valid file descriptor, "sockaddr_in" is a valid client address.
  *
  * Effects:
  *   Processes the client's request, and edits it to be appropriate
@@ -225,17 +225,18 @@ doit(int fd, struct sockaddr_in *clientaddr)
 	/* Fill in the method, URI, and version info from the first header. */
 	if (sscanf(buf, "%s %s %s", method, uri, version) != 3) {
 		client_error(fd, buf, 400, "Bad request",
-			"Request formatted in the wrong way.");
+		    "Request formatted in the wrong way.");
 		return;
 	}
 
 	/* Check that the request is GET and return an error if not. */
 	if (strcasecmp(method, "GET")) {
 		client_error(fd, method, 501, "Not implemented",
-			"Server only sopport GET.");
+		    "Server only sopport GET.");
 		return;
 	}
 
+	/* Check that there is a valid HTTP request. */
 	if (strcasecmp(version, "HTTP/1.0") &&
 	    strcasecmp(version, "HTTP/1.1")) {
 		client_error(fd, (const char *)version, 505, "Not Support", 
@@ -243,9 +244,10 @@ doit(int fd, struct sockaddr_in *clientaddr)
 		    return;
 	}
 
+	/* Try parsing uri. */
 	if (parse_uri((const char *)uri, &hostname, &port, &pathname) < 0) {
 		client_error(fd, (const char *)uri, 404, "Not found",
-		"Parse request failed");
+		    "Parse request failed");
 		Free(hostname);
 		Free(port);
 		Free(pathname);
@@ -254,7 +256,7 @@ doit(int fd, struct sockaddr_in *clientaddr)
 	
 	sprintf(buf_server, "%s %s %s\r\n", method, pathname, version);
 	
-
+	/* Remove unnessasary headers as requested. */
 	while (((num = rio_readlineb(&rio, read_line, MAXLINE)) > 0)) {
 		if (!strcmp(read_line, "\r\n"))
 			break;
@@ -264,33 +266,37 @@ doit(int fd, struct sockaddr_in *clientaddr)
 			strcat(buf_server, read_line);
 	}
 
+	/* Close connection for HTTP/1.1. */
 	if (strstr(version, "HTTP/1.1")) 
 		strcat(buf_server, "Connection: close\r\n");
-
 	strcat(buf_server, "\r\n");
+
+	/* Print HTTP and host to terminal. */
 	printf("%s", buf_server);
 
+	/* Get client fd.*/
 	client_fd = Open_clientfd(hostname, port);
-
 	if (client_fd < 0) {
 		client_error(fd, (const char *)uri, 404, "Not found",
-		 "The requested file does not exist");
+		    "The requested file does not exist");
+		return;
 	}
-
 	rio_readinitb(&rio_client, client_fd);
 
+	/* Error Handling: not proper get request. */
 	if (rio_writen(client_fd, buf_server, strlen(buf_server)) < 0) {
 		client_error(client_fd, buf, 400, "Bad request",
-			"Malformed Get Request");
+		    "Malformed Get Request");
 		return;
 	}
 
+	/* Calculate bytes forwarded for log entry. */
 	while ((n = rio_readn(client_fd, response, MAXLINE)) > 0) {
 
 		bytes_forwarded += n;
 		if (rio_writen(fd, response, n) != n) {
 			client_error(fd, buf, 400, "Bad request",
-				"Sending back error.");			
+			    "Sending back error.");			
 			Free(hostname);
 			Free(port);
 			Free(pathname);
@@ -309,7 +315,13 @@ doit(int fd, struct sockaddr_in *clientaddr)
 	return;
 }
 
-
+/* 
+ * Requires:
+ *   "sig" is an integer, SIGPIPE.
+ *
+ * Effects:
+ *   Ignores SIGPIPE, and print corresponding message.
+ */
 void 
 sig_ignore(int sig) {
     	printf("SIGPIPE ignored %d\n", sig);
